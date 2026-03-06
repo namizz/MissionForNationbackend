@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { authRequired, requireRole } = require('../middleware/auth');
-const { uploadBufferToCloudinary } = require('../utils/cloudinary');
+const { cloudinary, uploadBufferToCloudinary } = require('../utils/cloudinary');
 
 const router = express.Router();
 
@@ -50,6 +50,53 @@ function requireCloudinaryConfig(req, res, next) {
   }
   next();
 }
+
+function mapCloudinaryAsset(resource) {
+  return {
+    public_id: resource.public_id,
+    resource_type: resource.resource_type,
+    format: resource.format,
+    secure_url: resource.secure_url,
+    url: resource.url,
+    bytes: resource.bytes,
+    created_at: resource.created_at
+  };
+}
+
+async function listCloudinaryImages(req, res) {
+  try {
+    const folder = req.query.folder || 'mission-for-nation/images';
+    const nextCursor = req.query.next_cursor;
+    const maxResultsRaw = Number(req.query.max_results || 100);
+    const maxResults = Number.isFinite(maxResultsRaw)
+      ? Math.min(Math.max(maxResultsRaw, 1), 500)
+      : 100;
+
+    const result = await cloudinary.api.resources({
+      type: 'upload',
+      resource_type: 'image',
+      prefix: folder,
+      max_results: maxResults,
+      next_cursor: nextCursor
+    });
+
+    const assets = Array.isArray(result.resources)
+      ? result.resources.map(mapCloudinaryAsset)
+      : [];
+
+    return res.json({
+      ok: true,
+      assets,
+      next_cursor: result.next_cursor || null
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err?.message || 'Failed to fetch Cloudinary images' });
+  }
+}
+
+router.get('/upload/images', requireCloudinaryConfig, listCloudinaryImages);
+router.get('/upload/image/all', requireCloudinaryConfig, listCloudinaryImages);
 
 router.post(
   '/upload/image',
