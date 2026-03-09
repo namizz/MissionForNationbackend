@@ -53,4 +53,18 @@ router.post('/resend', authRequired, requireRole('super'), async (req, res) => {
   }
 });
 
+// Add this to your backend invitation routes file
+router.get('/validate', async (req, res) => {
+  const { token } = req.query;
+  try {
+    const inv = await db.query('SELECT * FROM invitations WHERE token=$1 AND accepted=false', [token]);
+    if (inv.rowCount === 1) {
+      return res.json({ valid: true, email: inv.rows[0].email, role: inv.rows[0].role });
+    }
+    return res.status(400).json({ error: 'Invalid or expired token' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

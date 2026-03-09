@@ -48,8 +48,10 @@ router.post('/login', async (req, res) => {
     const ok = await bcrypt.compare(password, u.password);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
     const token = jwt.sign({ id: u.id, email: u.email, role: u.role }, JWT_SECRET, { expiresIn: '7d' });
-    return res.json({ token });
-  } catch (err) {
+return res.json({ 
+  token, 
+  user: { id: u.id, email: u.email, role: u.role } 
+});  } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Server error' });
   }
