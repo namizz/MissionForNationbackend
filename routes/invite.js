@@ -8,7 +8,7 @@ require('dotenv').config();
 
 function buildAcceptInviteUrl(token) {
   const base = process.env.INVITE_ACCEPT_URL_BASE || `http://localhost:${process.env.PORT || 4000}`;
-  return `${base}/auth/accept-invite?token=${token}`;
+  return `${base}/accept-invite?token=${token}`;
 }
 
 // Send invitation (super user)
@@ -68,6 +68,12 @@ router.get('/validate', async (req, res) => {
     const inv = invr.rows[0];
     if (inv.accepted) return res.status(400).json({ error: 'Invitation already accepted' });
     if (inv.expires_at && new Date(inv.expires_at) < new Date()) return res.status(400).json({ error: 'Invitation expired' });
+    // Get region name
+    let region_name = null;
+    if (inv.region_id) {
+      const rr = await db.query('SELECT name FROM regions WHERE id=$1', [inv.region_id]);
+      if (rr.rowCount === 1) region_name = rr.rows[0].name;
+    }
     return res.json({
       ok: true,
       invitation: {
@@ -75,6 +81,7 @@ router.get('/validate', async (req, res) => {
         email: inv.email,
         role: inv.role,
         region_id: inv.region_id,
+        region_name,
         expires_at: inv.expires_at
       },
       token

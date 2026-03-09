@@ -18,7 +18,7 @@ export default function LoginPage() {
     dispatch(setLoading(true));
     
     try {
-      const response = await api.post('/auth/login', { email, password });
+      const response = await api.post('/api/auth/login', { email, password });
       // response.data should contain { token, user: { id, email, role } }
       dispatch(setAuth(response.data));
       navigate('/');
