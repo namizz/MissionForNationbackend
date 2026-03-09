@@ -66,7 +66,12 @@ function mapCloudinaryAsset(resource) {
 }
 
 async function validateRegionForUpload(user, regionId) {
-  if (!regionId) return { ok: false, status: 400, error: 'Missing region_id' };
+  if (!regionId) {
+    if (user.role === 'regional_admin') {
+      return { ok: false, status: 400, error: 'Missing region_id' };
+    }
+    return { ok: true };
+  }
 
   const region = await db.query('SELECT id FROM regions WHERE id=$1', [regionId]);
   if (region.rowCount !== 1) return { ok: false, status: 400, error: 'Region not found' };
@@ -141,14 +146,18 @@ router.post(
         return res.status(regionValidation.status).json({ error: regionValidation.error });
       }
 
-      const folder = req.body.folder || `mission-for-nation/images/${regionId}`;
+      const folder = req.body.folder || (regionId ? `mission-for-nation/images/${regionId}` : 'mission-for-nation/images/home');
       const result = await uploadBufferToCloudinary(file.buffer, {
         resource_type: 'image',
         folder
       });
 
       const { church_id, caption, location_link, expires_in_days } = req.body;
-      if (church_id) {
+      if (church_id && !regionId) {
+        return res.status(400).json({ error: 'church_id requires region_id' });
+      }
+
+      if (church_id && regionId) {
         const validChurch = await db.query('SELECT id FROM churches WHERE id=$1 AND region_id=$2', [church_id, regionId]);
         if (validChurch.rowCount !== 1) {
           return res.status(400).json({ error: 'church_id is invalid for selected region' });
@@ -160,22 +169,25 @@ router.post(
         return res.status(400).json({ error: 'expires_in_days must be a positive number' });
       }
 
-      const galleryId = uuidv4();
-      await db.query(
-        `INSERT INTO region_galleries(
-          id,author_id,region_id,church_id,caption,image_url,location_link,expires_at,created_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
-        [
-          galleryId,
-          req.user.id,
-          regionId,
-          church_id || null,
-          caption || null,
-          result.secure_url,
-          location_link || null,
-          expiresAt
-        ]
-      );
+      let galleryId = null;
+      if (regionId) {
+        galleryId = uuidv4();
+        await db.query(
+          `INSERT INTO region_galleries(
+            id,author_id,region_id,church_id,caption,image_url,location_link,expires_at,created_at
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
+          [
+            galleryId,
+            req.user.id,
+            regionId,
+            church_id || null,
+            caption || null,
+            result.secure_url,
+            location_link || null,
+            expiresAt
+          ]
+        );
+      }
 
       return res.json({
         ok: true,

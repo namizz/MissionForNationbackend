@@ -1,10 +1,62 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const multer = require('multer');
 const { authRequired, requireRole } = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
+const { uploadBufferToCloudinary } = require('../utils/cloudinary');
 
 const ALLOWED_CATEGORIES = ['special_program', 'mission', 'program_sunday'];
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 200 * 1024 * 1024
+  }
+});
+
+const anyUploadField = upload.any();
+
+function runMulter(middleware) {
+  return (req, res, next) => {
+    middleware(req, res, (err) => {
+      if (!err) return next();
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ error: 'File too large. Max size is 200MB' });
+        }
+        return res.status(400).json({ error: err.message });
+      }
+      return next(err);
+    });
+  };
+}
+
+function requireCloudinaryConfig(req, res, next) {
+  const hasConfig =
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET;
+
+  if (!hasConfig) {
+    return res.status(500).json({ error: 'Cloudinary is not configured on server' });
+  }
+
+  return next();
+}
+
+function getUploadedMediaFiles(req) {
+  const files = Array.isArray(req.files) ? req.files : [];
+  let imageFile = null;
+  let videoFile = null;
+
+  for (const file of files) {
+    if (!imageFile && file.mimetype && file.mimetype.startsWith('image/')) imageFile = file;
+    if (!videoFile && file.mimetype && file.mimetype.startsWith('video/')) videoFile = file;
+  }
+
+  return { imageFile, videoFile };
+}
 
 function parseExpiryDate(expiresInDays) {
   if (expiresInDays === undefined || expiresInDays === null || expiresInDays === '') return null;
@@ -84,17 +136,41 @@ router.get('/churches', async (req, res) => {
 });
 
 // Create blog item for homepage (super only)
-router.post('/blogs', authRequired, requireRole('super'), async (req, res) => {
-  const { text, image_url, expires_in_days } = req.body;
-  if (!text || !image_url) return res.status(400).json({ error: 'Missing text or image_url' });
+router.post('/blogs', authRequired, requireRole('super'), requireCloudinaryConfig, runMulter(anyUploadField), async (req, res) => {
+  const { text, image_url: imageUrlFromBody, video_url: videoUrlFromBody, expires_in_days } = req.body;
+
+  const { imageFile, videoFile } = getUploadedMediaFiles(req);
+
+  let imageUrl = imageUrlFromBody || null;
+  let videoUrl = videoUrlFromBody || null;
+
+  if (imageFile) {
+    const imageUpload = await uploadBufferToCloudinary(imageFile.buffer, {
+      resource_type: 'image',
+      folder: 'mission-for-nation/home/blogs/images'
+    });
+    imageUrl = imageUpload.secure_url;
+  }
+
+  if (videoFile) {
+    const videoUpload = await uploadBufferToCloudinary(videoFile.buffer, {
+      resource_type: 'video',
+      folder: 'mission-for-nation/home/blogs/videos'
+    });
+    videoUrl = videoUpload.secure_url;
+  }
+
+  if (!imageUrl && !videoUrl) {
+    return res.status(400).json({ error: 'Provide at least one media URL: image_url or video_url' });
+  }
 
   const expiresAt = parseExpiryDate(expires_in_days);
   if (expiresAt === undefined) return res.status(400).json({ error: 'expires_in_days must be a positive number' });
 
   const id = uuidv4();
   await db.query(
-    'INSERT INTO blogs(id,author_id,text,image_url,expires_at,created_at) VALUES($1,$2,$3,$4,$5,NOW())',
-    [id, req.user.id, text, image_url, expiresAt]
+    'INSERT INTO blogs(id,author_id,text,image_url,video_url,expires_at,created_at) VALUES($1,$2,$3,$4,$5,$6,NOW())',
+    [id, req.user.id, text || '', imageUrl, videoUrl, expiresAt]
   );
   return res.json({ ok: true, id });
 });
@@ -106,7 +182,7 @@ router.get('/blogs', async (req, res) => {
   const includeExpired = String(include_expired).toLowerCase() === 'true';
 
   const query = `
-    SELECT id, text, image_url, created_at, expires_at
+    SELECT id, text, image_url, video_url, created_at, expires_at
     FROM blogs
     WHERE ($1 = '' OR text ILIKE '%' || $1 || '%')
       AND ($2::boolean = true OR expires_at IS NULL OR expires_at > NOW())
