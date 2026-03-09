@@ -77,6 +77,18 @@ async function validateChurchIdsForRegion(churchIds, regionId) {
   return c.rowCount === uniqueChurchIds.length;
 }
 
+function normalizeJsonArray(value, fieldName) {
+  if (value === undefined || value === null || value === '') return [];
+  if (!Array.isArray(value)) throw new Error(`${fieldName} must be an array`);
+  return value;
+}
+
+function normalizeJsonObject(value, fieldName) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`${fieldName} must be an object`);
+  return value;
+}
+
 // List users (super)
 router.get('/users', authRequired, requireRole('super'), async (req, res) => {
   const result = await db.query('SELECT id,email,role FROM users');
@@ -106,20 +118,90 @@ router.get('/regions', async (req, res) => {
   return res.json({ regions: r.rows });
 });
 
-// Add church to a region (super)
-router.post('/churches', authRequired, requireRole('super'), async (req, res) => {
-  const { name, region_id, location_link } = req.body;
-  if (!name || !region_id) return res.status(400).json({ error: 'Missing name or region_id' });
+// Add church to a region (super or regional_admin)
+router.post('/churches', authRequired, requireRole('super', 'regional_admin'), async (req, res) => {
+  try {
+    const {
+      id: external_id,
+      name,
+      location,
+      address,
+      phone,
+      email,
+      description,
+      heroImage,
+      serviceTimes,
+      announcements,
+      pastor,
+      events,
+      ministries,
+      gallery,
+      mapUrl,
+      region_id,
+      regionId,
+      location_link
+    } = req.body;
 
-  const rr = await db.query('SELECT id FROM regions WHERE id=$1', [region_id]);
+    const resolvedRegionId = region_id || regionId;
+    if (!name || !resolvedRegionId) return res.status(400).json({ error: 'Missing name or region_id' });
+
+    const rr = await db.query('SELECT id FROM regions WHERE id=$1', [resolvedRegionId]);
   if (rr.rowCount !== 1) return res.status(400).json({ error: 'Region not found' });
 
-  const id = uuidv4();
-  await db.query(
-    'INSERT INTO churches(id,name,region_id,location_link,created_at) VALUES($1,$2,$3,$4,NOW())',
-    [id, name, region_id, location_link || null]
-  );
-  return res.json({ ok: true, id });
+    if (req.user.role === 'regional_admin') {
+      const allowedRegion = await userCanPostToRegion(req.user.id, resolvedRegionId);
+      if (!allowedRegion) return res.status(403).json({ error: 'Forbidden for this region' });
+    }
+
+    const normalizedServiceTimes = normalizeJsonArray(serviceTimes, 'serviceTimes');
+    const normalizedAnnouncements = normalizeJsonArray(announcements, 'announcements');
+    const normalizedEvents = normalizeJsonArray(events, 'events');
+    const normalizedMinistries = normalizeJsonArray(ministries, 'ministries');
+    const normalizedGallery = normalizeJsonArray(gallery, 'gallery');
+    const normalizedPastor = normalizeJsonObject(pastor, 'pastor');
+
+    const churchId = uuidv4();
+    await db.query(
+      `INSERT INTO churches(
+        id,external_id,name,region_id,location,address,phone,email,description,hero_image,
+        service_times,announcements,pastor,events,ministries,gallery,map_url,location_link,created_at,updated_at
+      ) VALUES(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        $11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,NOW(),NOW()
+      )`,
+      [
+        churchId,
+        external_id || null,
+        name,
+        resolvedRegionId,
+        location || null,
+        address || null,
+        phone || null,
+        email || null,
+        description || null,
+        heroImage || null,
+        JSON.stringify(normalizedServiceTimes),
+        JSON.stringify(normalizedAnnouncements),
+        JSON.stringify(normalizedPastor),
+        JSON.stringify(normalizedEvents),
+        JSON.stringify(normalizedMinistries),
+        JSON.stringify(normalizedGallery),
+        mapUrl || null,
+        location_link || null
+      ]
+    );
+
+    return res.json({ ok: true, id: churchId, external_id: external_id || null });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Church id already exists for this region' });
+    }
+    if (err.message && err.message.includes('must be')) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Public list of churches (optionally filtered by region_id)
@@ -133,6 +215,14 @@ router.get('/churches', async (req, res) => {
 
   const c = await db.query('SELECT * FROM churches ORDER BY created_at DESC');
   return res.json({ churches: c.rows });
+});
+
+// Public church detail by id
+router.get('/churches/:id', async (req, res) => {
+  const { id } = req.params;
+  const c = await db.query('SELECT * FROM churches WHERE id=$1', [id]);
+  if (c.rowCount !== 1) return res.status(404).json({ error: 'Church not found' });
+  return res.json({ church: c.rows[0] });
 });
 
 // Create blog item for homepage (super only)
