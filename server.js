@@ -1,6 +1,5 @@
 const express = require("express");
 const bodyParser = require("body-parser");
-const cors = require("cors");
 require("dotenv").config();
 
 // handle unhandled promise rejections and uncaught exceptions to avoid crashes
