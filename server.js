@@ -12,8 +12,15 @@ process.on("uncaughtException", (err) => {
 });
 
 const app = express();
-app.use(cors());
+
 app.use(bodyParser.json());
+const cors = require('cors');
+// Enable CORS for frontend origin
+app.use(cors({
+  origin: 'https://mfn-nu.vercel.app',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 const authRoutes = require("./routes/auth");
 const inviteRoutes = require("./routes/invite");
