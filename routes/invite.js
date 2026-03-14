@@ -1,79 +1,185 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const db = require('../db');
-const { v4: uuidv4, validate: uuidValidate } = require('uuid');
-const { sendMail } = require('../utils/email');
-const { authRequired, requireRole } = require('../middleware/auth');
-require('dotenv').config();
+const db = require("../db");
+const { v4: uuidv4, validate: uuidValidate } = require("uuid");
+const { sendMail } = require("../utils/email");
+const { authRequired, requireRole } = require("../middleware/auth");
+require("dotenv").config();
 
 function buildAcceptInviteUrl(token) {
-  const base = process.env.INVITE_ACCEPT_URL_BASE || `http://localhost:${process.env.PORT || 4000}`;
+  const base =
+    process.env.INVITE_ACCEPT_URL_BASE ||
+    `http://localhost:${process.env.PORT || 4000}`;
   return `${base}/accept-invite?token=${token}`;
 }
 
 // Send invitation (super user)
-router.post('/send', authRequired, requireRole('super'), async (req, res) => {
+router.post("/send", authRequired, requireRole("super"), async (req, res) => {
   const { email, role, region_id } = req.body;
-  if (!email || !role) return res.status(400).json({ error: 'Missing fields' });
-  // require region_id created by a super user (no auto-creation here)
-  if (!region_id) {
-    return res.status(400).json({ error: 'region_id is required. Create a region via /api/regions as a super user first.' });
+  console.log("Send invitation request body:", req.body);
+
+  if (!email || !role) {
+    return res.status(400).json({ error: "Missing fields" });
   }
-  if (!uuidValidate(region_id)) return res.status(400).json({ error: 'region_id must be a UUID' });
-  const rr = await db.query('SELECT name FROM regions WHERE id=$1', [region_id]);
-  if (rr.rowCount !== 1) return res.status(400).json({ error: 'region not found; create it first via /api/regions' });
-  const regionId = region_id;
-  const regionName = rr.rows[0].name;
+
+  if (!region_id) {
+    return res.status(400).json({
+      error:
+        "region_id is required. Create a region via /api/regions as a super user first.",
+    });
+  }
+
+  if (!uuidValidate(region_id)) {
+    return res.status(400).json({ error: "region_id must be a UUID" });
+  }
+
   try {
+    const rr = await db.query("SELECT name FROM regions WHERE id=$1", [
+      region_id,
+    ]);
+
+    if (rr.rowCount !== 1) {
+      return res.status(400).json({
+        error: "region not found; create it first via /api/regions",
+      });
+    }
+
+    const regionId = region_id;
+    const regionName = rr.rows[0].name;
+
     const token = uuidv4();
     const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7); // 7 days
     const id = uuidv4();
-    await db.query('INSERT INTO invitations(id,email,role,region_id,token,expires_at,sent_count,accepted) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [id, email, role, regionId, token, expires, 1, false]);
+
+    await db.query(
+      `INSERT INTO invitations
+      (id, email, role, region_id, token, expires_at, sent_count, accepted)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, email, role, regionId, token, expires, 1, false],
+    );
+
     const url = buildAcceptInviteUrl(token);
-    await sendMail({ to: email, subject: 'Invitation', html: `<p>You are invited as ${role} in region ${regionName || ''}. Accept: <a href="${url}">${url}</a></p>` });
-    return res.json({ ok: true, token, region_id: regionId, region_name: regionName });
+
+    await sendMail({
+      to: email,
+      subject: "Invitation",
+      html: `
+        <p>Hello,</p>
+        <p>You are invited as <strong>${role}</strong> in region <strong>${regionName}</strong>.</p>
+        <p>
+          Accept your invitation:
+          <a href="${url}">${url}</a>
+        </p>
+        <p>This invitation expires in 7 days.</p>
+      `,
+      text: `You are invited as ${role} in region ${regionName}. Accept here: ${url}`,
+    });
+
+    return res.json({
+      ok: true,
+      token,
+      region_id: regionId,
+      region_name: regionName,
+    });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Server error' });
+    console.error("Send invitation error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
 // Resend invitation
-router.post('/resend', authRequired, requireRole('super'), async (req, res) => {
+router.post("/resend", authRequired, requireRole("super"), async (req, res) => {
   const { invitation_id } = req.body;
-  if (!invitation_id) return res.status(400).json({ error: 'Missing invitation_id' });
-  if (!uuidValidate(invitation_id)) return res.status(400).json({ error: 'invitation_id must be a UUID' });
+
+  if (!invitation_id) {
+    return res.status(400).json({ error: "Missing invitation_id" });
+  }
+
+  if (!uuidValidate(invitation_id)) {
+    return res.status(400).json({ error: "invitation_id must be a UUID" });
+  }
+
   try {
-    const invr = await db.query('SELECT * FROM invitations WHERE id=$1', [invitation_id]);
-    if (invr.rowCount !== 1) return res.status(404).json({ error: 'Not found' });
+    const invr = await db.query("SELECT * FROM invitations WHERE id=$1", [
+      invitation_id,
+    ]);
+
+    if (invr.rowCount !== 1) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
     const inv = invr.rows[0];
     const token = uuidv4();
-    await db.query('UPDATE invitations SET token=$1,expires_at=$2,sent_count=sent_count+1 WHERE id=$3', [token, new Date(Date.now() + 1000 * 60 * 60 * 24 * 7), invitation_id]);
+    const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+
+    await db.query(
+      "UPDATE invitations SET token=$1, expires_at=$2, sent_count=sent_count+1 WHERE id=$3",
+      [token, expires, invitation_id],
+    );
+
     const url = buildAcceptInviteUrl(token);
-    await sendMail({ to: inv.email, subject: 'Invitation (resend)', html: `<p>Accept: <a href="${url}">${url}</a></p>` });
+
+    await sendMail({
+      to: inv.email,
+      subject: "Invitation (resend)",
+      html: `
+        <p>Hello,</p>
+        <p>Your invitation has been resent.</p>
+        <p>
+          Accept your invitation:
+          <a href="${url}">${url}</a>
+        </p>
+        <p>This invitation expires in 7 days.</p>
+      `,
+      text: `Your invitation has been resent. Accept here: ${url}`,
+    });
+
     return res.json({ ok: true, token, invitation_url: url });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Server error' });
+    console.error("Resend invitation error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
 // Validate invitation token for frontend accept-invite page
-router.get('/validate', async (req, res) => {
+router.get("/validate", async (req, res) => {
   const { token } = req.query;
-  if (!token) return res.status(400).json({ error: 'Missing token' });
+
+  if (!token) {
+    return res.status(400).json({ error: "Missing token" });
+  }
+
   try {
-    const invr = await db.query('SELECT id,email,role,region_id,expires_at,accepted FROM invitations WHERE token=$1', [token]);
-    if (invr.rowCount !== 1) return res.status(404).json({ error: 'Invitation not found' });
-    const inv = invr.rows[0];
-    if (inv.accepted) return res.status(400).json({ error: 'Invitation already accepted' });
-    if (inv.expires_at && new Date(inv.expires_at) < new Date()) return res.status(400).json({ error: 'Invitation expired' });
-    // Get region name
-    let region_name = null;
-    if (inv.region_id) {
-      const rr = await db.query('SELECT name FROM regions WHERE id=$1', [inv.region_id]);
-      if (rr.rowCount === 1) region_name = rr.rows[0].name;
+    const invr = await db.query(
+      "SELECT id, email, role, region_id, expires_at, accepted FROM invitations WHERE token=$1",
+      [token],
+    );
+
+    if (invr.rowCount !== 1) {
+      return res.status(404).json({ error: "Invitation not found" });
     }
+
+    const inv = invr.rows[0];
+
+    if (inv.accepted) {
+      return res.status(400).json({ error: "Invitation already accepted" });
+    }
+
+    if (inv.expires_at && new Date(inv.expires_at) < new Date()) {
+      return res.status(400).json({ error: "Invitation expired" });
+    }
+
+    let region_name = null;
+
+    if (inv.region_id) {
+      const rr = await db.query("SELECT name FROM regions WHERE id=$1", [
+        inv.region_id,
+      ]);
+      if (rr.rowCount === 1) {
+        region_name = rr.rows[0].name;
+      }
+    }
+
     return res.json({
       ok: true,
       invitation: {
@@ -82,27 +188,13 @@ router.get('/validate', async (req, res) => {
         role: inv.role,
         region_id: inv.region_id,
         region_name,
-        expires_at: inv.expires_at
+        expires_at: inv.expires_at,
       },
-      token
+      token,
     });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Add this to your backend invitation routes file
-router.get('/validate', async (req, res) => {
-  const { token } = req.query;
-  try {
-    const inv = await db.query('SELECT * FROM invitations WHERE token=$1 AND accepted=false', [token]);
-    if (inv.rowCount === 1) {
-      return res.json({ valid: true, email: inv.rows[0].email, role: inv.rows[0].role });
-    }
-    return res.status(400).json({ error: 'Invalid or expired token' });
-  } catch (err) {
-    return res.status(500).json({ error: 'Server error' });
+    console.error("Validate invitation error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
