@@ -20,6 +20,7 @@ app.use(
     origin: [
       "https://mfn-nu.vercel.app",
       "https://mfn-admin-frontend-8mfr.vercel.app/login",
+      "https://mfn-admin-frontend.vercel.app",
     ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
