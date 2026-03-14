@@ -17,11 +17,7 @@ const cors = require("cors");
 // Enable CORS for frontend origin
 app.use(
   cors({
-    origin: [
-      "https://mfn-nu.vercel.app",
-      "https://mfn-admin-frontend-8mfr.vercel.app/login",
-      "https://mfn-admin-frontend.vercel.app",
-    ],
+    origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
