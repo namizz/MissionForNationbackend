@@ -86,10 +86,25 @@ router.post("/accept-invite", async (req, res) => {
     const existing = await db.query("SELECT id FROM users WHERE email=$1", [
       invitationEmail,
     ]);
+    let id;
     if (existing.rowCount > 0) {
-      return res.status(409).json({
-        error: "User already exists for this email. Please log in instead.",
-        code: "USER_EXISTS"
+      // User already exists, mark invitation as accepted and return success
+      await db.query("UPDATE invitations SET accepted=true WHERE id=$1", [
+        invResult.invitation.id,
+      ]);
+      id = existing.rows[0].id;
+      const role = invResult.invitation.role;
+      const region_id = invResult.invitation.region_id;
+      const authToken = jwt.sign(
+        { id, email: invitationEmail, role },
+        JWT_SECRET,
+        { expiresIn: "7d" },
+      );
+      return res.json({
+        ok: true,
+        token: authToken,
+        user: { id, email: invitationEmail, role, region_id },
+        message: "Invitation accepted. User already exists."
       });
     }
 
