@@ -86,10 +86,12 @@ router.post("/accept-invite", async (req, res) => {
     const existing = await db.query("SELECT id FROM users WHERE email=$1", [
       invitationEmail,
     ]);
-    if (existing.rowCount > 0)
-      return res
-        .status(409)
-        .json({ error: "User already exists for this email" });
+    if (existing.rowCount > 0) {
+      return res.status(409).json({
+        error: "User already exists for this email. Please log in instead.",
+        code: "USER_EXISTS"
+      });
+    }
 
     const hashed = await bcrypt.hash(password, 10);
     const id = uuidv4();
